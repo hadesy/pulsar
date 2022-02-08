@@ -31,6 +31,8 @@ import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -204,7 +206,7 @@ public class PersistentTopicTest extends BrokerTestBase {
         PersistentTopic topic = (PersistentTopic) pulsar.getBrokerService().getTopicReference(topicName).get();
 
         // stats are at zero before any activity
-        TopicStats stats = topic.getStats(false, false);
+        TopicStats stats = topic.getStats(false, false, false);
         assertEquals(stats.getBytesInCounter(), 0);
         assertEquals(stats.getMsgInCounter(), 0);
         assertEquals(stats.getBytesOutCounter(), 0);
@@ -218,7 +220,7 @@ public class PersistentTopicTest extends BrokerTestBase {
         assertNotNull(msg);
 
         // send/receive result in non-zero stats
-        TopicStats statsBeforeUnsubscribe = topic.getStats(false, false);
+        TopicStats statsBeforeUnsubscribe = topic.getStats(false, false, false);
         assertTrue(statsBeforeUnsubscribe.getBytesInCounter() > 0);
         assertTrue(statsBeforeUnsubscribe.getMsgInCounter() > 0);
         assertTrue(statsBeforeUnsubscribe.getBytesOutCounter() > 0);
@@ -231,10 +233,42 @@ public class PersistentTopicTest extends BrokerTestBase {
         assertEquals(topic.getProducers().size(), 0);
 
         // consumer unsubscribe/producer removal does not result in stats loss
-        TopicStats statsAfterUnsubscribe = topic.getStats(false, false);
+        TopicStats statsAfterUnsubscribe = topic.getStats(false, false, false);
         assertEquals(statsAfterUnsubscribe.getBytesInCounter(), statsBeforeUnsubscribe.getBytesInCounter());
         assertEquals(statsAfterUnsubscribe.getMsgInCounter(), statsBeforeUnsubscribe.getMsgInCounter());
         assertEquals(statsAfterUnsubscribe.getBytesOutCounter(), statsBeforeUnsubscribe.getBytesOutCounter());
         assertEquals(statsAfterUnsubscribe.getMsgOutCounter(), statsBeforeUnsubscribe.getMsgOutCounter());
+    }
+
+    @Test
+    public void testPersistentPartitionedTopicUnload() throws Exception {
+        final String topicName = "persistent://prop/ns/failedUnload";
+        final String ns = "prop/ns";
+        final int partitions = 5;
+        final int producers = 1;
+        // ensure that the number of bundle is greater than 1
+        final int bundles = 2;
+
+        admin.namespaces().createNamespace(ns, bundles);
+        admin.topics().createPartitionedTopic(topicName, partitions);
+
+        List<Producer> producerSet = new ArrayList<>();
+        for (int i = 0; i < producers; i++) {
+            producerSet.add(pulsarClient.newProducer(Schema.STRING).topic(topicName).create());
+        }
+
+        assertFalse(pulsar.getBrokerService().getTopics().containsKey(topicName));
+        pulsar.getBrokerService().getTopicIfExists(topicName).get();
+        assertTrue(pulsar.getBrokerService().getTopics().containsKey(topicName));
+
+        // ref of partitioned-topic name should be empty
+        assertFalse(pulsar.getBrokerService().getTopicReference(topicName).isPresent());
+
+        NamespaceBundle bundle = pulsar.getNamespaceService().getBundle(TopicName.get(topicName));
+        pulsar.getNamespaceService().unloadNamespaceBundle(bundle, 5, TimeUnit.SECONDS).get();
+
+        for (Producer producer : producerSet) {
+            producer.close();
+        }
     }
 }

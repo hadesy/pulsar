@@ -20,15 +20,20 @@ package org.apache.pulsar;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
 import java.io.FileInputStream;
 import java.util.Arrays;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.common.configuration.PulsarConfigurationLoader;
+import org.apache.pulsar.common.util.CmdGenerateDocs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class PulsarStandaloneStarter extends PulsarStandalone {
+    @Parameter(names = {"-g", "--generate-docs"}, description = "Generate docs")
+    private boolean generateDocs = false;
 
     private static final Logger log = LoggerFactory.getLogger(PulsarStandaloneStarter.class);
 
@@ -41,6 +46,12 @@ public class PulsarStandaloneStarter extends PulsarStandalone {
             if (this.isHelp() || isBlank(this.getConfigFile())) {
                 jcommander.usage();
                 return;
+            }
+            if (this.generateDocs) {
+                CmdGenerateDocs cmd = new CmdGenerateDocs("pulsar");
+                cmd.addCommand("standalone", this);
+                cmd.run(null);
+                System.exit(0);
             }
 
             if (this.isNoBroker() && this.isOnlyBroker()) {
@@ -74,16 +85,13 @@ public class PulsarStandaloneStarter extends PulsarStandalone {
 
         // Set ZK server's host to localhost
         // Priority: args > conf > default
-        if (argsContains(args, "--zookeeper-port")) {
-            config.setZookeeperServers(zkServers + ":" + this.getZkPort());
-            config.setConfigurationStoreServers(zkServers + ":" + this.getZkPort());
-        } else {
-            if (config.getZookeeperServers() != null) {
-                this.setZkPort(Integer.parseInt(config.getZookeeperServers().split(":")[1]));
+        if (!argsContains(args, "--zookeeper-port")) {
+            if (StringUtils.isNotBlank(config.getMetadataStoreUrl())) {
+                this.setZkPort(Integer.parseInt(config.getMetadataStoreUrl().split(":")[1]));
             }
-            config.setZookeeperServers(zkServers + ":" + this.getZkPort());
-            config.setConfigurationStoreServers(zkServers + ":" + this.getZkPort());
         }
+        config.setZookeeperServers(zkServers + ":" + this.getZkPort());
+        config.setConfigurationStoreServers(zkServers + ":" + this.getZkPort());
 
         config.setRunningStandalone(true);
 

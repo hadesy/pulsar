@@ -204,6 +204,16 @@ ProducerConfiguration& ProducerConfiguration::addEncryptionKey(std::string key) 
     return *this;
 }
 
+ProducerConfiguration& ProducerConfiguration::setLazyStartPartitionedProducers(
+    bool useLazyStartPartitionedProducers) {
+    impl_->useLazyStartPartitionedProducers = useLazyStartPartitionedProducers;
+    return *this;
+}
+
+bool ProducerConfiguration::getLazyStartPartitionedProducers() const {
+    return impl_->useLazyStartPartitionedProducers;
+}
+
 ProducerConfiguration& ProducerConfiguration::setSchema(const SchemaInfo& schemaInfo) {
     impl_->schemaInfo = schemaInfo;
     return *this;
@@ -240,5 +250,12 @@ ProducerConfiguration& ProducerConfiguration::setProperties(
     }
     return *this;
 }
+
+ProducerConfiguration& ProducerConfiguration::setChunkingEnabled(bool chunkingEnabled) {
+    impl_->chunkingEnabled = chunkingEnabled;
+    return *this;
+}
+
+bool ProducerConfiguration::isChunkingEnabled() const { return impl_->chunkingEnabled; }
 
 }  // namespace pulsar

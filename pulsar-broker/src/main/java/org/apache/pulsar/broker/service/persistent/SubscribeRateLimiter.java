@@ -19,6 +19,7 @@
 package org.apache.pulsar.broker.service.persistent;
 
 
+import static org.apache.pulsar.common.util.Runnables.catchingAndLoggingThrowables;
 import com.google.common.base.MoreObjects;
 import java.util.Objects;
 import java.util.Optional;
@@ -139,8 +140,12 @@ public class SubscribeRateLimiter {
         if (ratePerConsumer > 0) {
             if (this.subscribeRateLimiter.get(consumerIdentifier) == null) {
                 this.subscribeRateLimiter.put(consumerIdentifier,
-                        new RateLimiter(brokerService.pulsar().getExecutor(), ratePerConsumer,
-                                ratePeriod, TimeUnit.SECONDS, null));
+                        RateLimiter.builder()
+                                .scheduledExecutorService(brokerService.pulsar().getExecutor())
+                                .permits(ratePerConsumer)
+                                .rateTime(ratePeriod)
+                                .timeUnit(TimeUnit.SECONDS)
+                                .build());
             } else {
                 this.subscribeRateLimiter.get(consumerIdentifier)
                         .setRate(ratePerConsumer, ratePeriod, TimeUnit.SECONDS,
@@ -223,7 +228,7 @@ public class SubscribeRateLimiter {
         SubscribeRate subscribeRate = getPoliciesSubscribeRate(serviceConfig.getClusterName(), policies, topicName);
         if (subscribeRate == null) {
             return serviceConfig.getSubscribeThrottlingRatePerConsumer() > 0
-                    || serviceConfig.getSubscribeRatePeriodPerConsumerInSecond() > 0;
+                    && serviceConfig.getSubscribeRatePeriodPerConsumerInSecond() > 0;
         }
         return true;
     }
@@ -267,7 +272,7 @@ public class SubscribeRateLimiter {
     }
 
     private ScheduledFuture<?> createTask() {
-        return executorService.scheduleAtFixedRate(this::closeAndClearRateLimiters,
+        return executorService.scheduleAtFixedRate(catchingAndLoggingThrowables(this::closeAndClearRateLimiters),
                 this.subscribeRate.ratePeriodInSecond,
                 this.subscribeRate.ratePeriodInSecond,
                 TimeUnit.SECONDS);

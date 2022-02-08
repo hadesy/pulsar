@@ -37,6 +37,7 @@ struct ProducerConfigurationImpl {
     ProducerConfiguration::PartitionsRoutingMode routingMode{ProducerConfiguration::UseSinglePartition};
     MessageRoutingPolicyPtr messageRouter;
     ProducerConfiguration::HashingScheme hashingScheme{ProducerConfiguration::BoostHash};
+    bool useLazyStartPartitionedProducers{false};
     bool blockIfQueueFull{false};
     bool batchingEnabled{true};
     unsigned int batchingMaxMessages{1000};
@@ -47,6 +48,7 @@ struct ProducerConfigurationImpl {
     std::set<std::string> encryptionKeys;
     ProducerCryptoFailureAction cryptoFailureAction{ProducerCryptoFailureAction::FAIL};
     std::map<std::string, std::string> properties;
+    bool chunkingEnabled{false};
 };
 }  // namespace pulsar
 

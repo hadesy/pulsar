@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
@@ -50,6 +49,7 @@ import org.apache.pulsar.common.io.ConnectorDefinition;
 import org.apache.pulsar.common.io.SourceConfig;
 import org.apache.pulsar.common.policies.data.ExceptionInformation;
 import org.apache.pulsar.common.policies.data.SourceStatus;
+import org.apache.pulsar.common.util.ClassLoaderUtils;
 import org.apache.pulsar.common.util.RestException;
 import org.apache.pulsar.functions.auth.FunctionAuthData;
 import org.apache.pulsar.functions.instance.InstanceUtils;
@@ -58,11 +58,11 @@ import org.apache.pulsar.functions.proto.InstanceCommunication;
 import org.apache.pulsar.functions.utils.ComponentTypeUtils;
 import org.apache.pulsar.functions.utils.FunctionCommon;
 import org.apache.pulsar.functions.utils.SourceConfigUtils;
+import org.apache.pulsar.functions.utils.io.Connector;
 import org.apache.pulsar.functions.worker.FunctionMetaDataManager;
 import org.apache.pulsar.functions.worker.PulsarWorkerService;
 import org.apache.pulsar.functions.worker.WorkerUtils;
 import org.apache.pulsar.functions.worker.service.api.Sources;
-import org.apache.pulsar.packages.management.core.common.PackageType;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 
 @Slf4j
@@ -152,7 +152,7 @@ public class SourcesImpl extends ComponentImpl implements Sources<PulsarWorkerSe
             // validate parameters
             try {
                 if (isPkgUrlProvided) {
-                    if (hasPackageTypePrefix(sourcePkgUrl)) {
+                    if (Utils.hasPackageTypePrefix(sourcePkgUrl)) {
                         componentPackageFile = downloadPackageFile(sourcePkgUrl);
                     } else {
                         if (!Utils.isFunctionPackageUrlSupported(sourcePkgUrl)) {
@@ -320,7 +320,7 @@ public class SourcesImpl extends ComponentImpl implements Sources<PulsarWorkerSe
             // validate parameters
             try {
                 if (isNotBlank(sourcePkgUrl)) {
-                    if (hasPackageTypePrefix(sourcePkgUrl)) {
+                    if (Utils.hasPackageTypePrefix(sourcePkgUrl)) {
                         componentPackageFile = downloadPackageFile(sourcePkgUrl);
                     } else {
                         try {
@@ -533,7 +533,7 @@ public class SourcesImpl extends ComponentImpl implements Sources<PulsarWorkerSe
                 if (isOwner) {
                     sourceInstanceStatusData = getComponentInstanceStatus(tenant, namespace, name, assignment.getInstance().getInstanceId(), null);
                 } else {
-                    sourceInstanceStatusData = worker().getFunctionAdmin().source().getSourceStatus(
+                    sourceInstanceStatusData = worker().getFunctionAdmin().sources().getSourceStatus(
                             assignment.getInstance().getFunctionMetaData().getFunctionDetails().getTenant(),
                             assignment.getInstance().getFunctionMetaData().getFunctionDetails().getNamespace(),
                             assignment.getInstance().getFunctionMetaData().getFunctionDetails().getName(),
@@ -719,28 +719,38 @@ public class SourcesImpl extends ComponentImpl implements Sources<PulsarWorkerSe
             String archive = sourceConfig.getArchive();
             if (archive.startsWith(org.apache.pulsar.common.functions.Utils.BUILTIN)) {
                 archive = archive.replaceFirst("^builtin://", "");
-                classLoader = this.worker().getConnectorsManager().getConnector(archive).getClassLoader();
+
+                Connector connector = worker().getConnectorsManager().getConnector(archive);
+                // check if builtin connector exists
+                if (connector == null) {
+                    throw new IllegalArgumentException("Built-in source is not available");
+                }
+                classLoader = connector.getClassLoader();
             }
         }
 
-        // if source is not builtin, attempt to extract classloader from package file if it exists
-        if (classLoader == null && sourcePackageFile != null) {
-            classLoader = getClassLoaderFromPackage(sourceConfig.getClassName(),
-                    sourcePackageFile, worker().getWorkerConfig().getNarExtractionDirectory());
+        boolean shouldCloseClassLoader = false;
+        try {
+            // if source is not builtin, attempt to extract classloader from package file if it exists
+            if (classLoader == null && sourcePackageFile != null) {
+                classLoader = getClassLoaderFromPackage(sourceConfig.getClassName(),
+                        sourcePackageFile, worker().getWorkerConfig().getNarExtractionDirectory());
+                shouldCloseClassLoader = true;
+            }
+
+            if (classLoader == null) {
+                throw new IllegalArgumentException("Source package is not provided");
+            }
+
+            SourceConfigUtils.ExtractedSourceDetails sourceDetails
+                    = SourceConfigUtils.validateAndExtractDetails(
+                            sourceConfig, classLoader, worker().getWorkerConfig().getValidateConnectorConfig());
+            return SourceConfigUtils.convert(sourceConfig, sourceDetails);
+        } finally {
+            if (shouldCloseClassLoader) {
+                ClassLoaderUtils.closeClassLoader(classLoader);
+            }
         }
-
-        if (classLoader == null) {
-            throw new IllegalArgumentException("Source package is not provided");
-        }
-
-        SourceConfigUtils.ExtractedSourceDetails sourceDetails
-                = SourceConfigUtils.validateAndExtractDetails(
-                        sourceConfig, classLoader, worker().getWorkerConfig().getValidateConnectorConfig());
-        return SourceConfigUtils.convert(sourceConfig, sourceDetails);
-    }
-
-    private static boolean hasPackageTypePrefix(String destPkgUrl) {
-        return Arrays.stream(PackageType.values()).anyMatch(type -> destPkgUrl.startsWith(type.toString()));
     }
 
     private File downloadPackageFile(String packageName) throws IOException, PulsarAdminException {

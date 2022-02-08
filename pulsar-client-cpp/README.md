@@ -40,7 +40,7 @@ https://github.com/apache/pulsar/tree/master/pulsar-client-cpp/examples
  * A C++ compiler that supports C++11, like GCC >= 4.8
  * CMake >= 3.4
  * [Boost](http://www.boost.org/)
- * [Protocol Buffer](https://developers.google.com/protocol-buffers/)
+ * [Protocol Buffer](https://developers.google.com/protocol-buffers/) >= 3
  * [libcurl](https://curl.se/libcurl/)
  * [openssl](https://github.com/openssl/openssl)
 
@@ -214,8 +214,10 @@ cmake --build ./build --config Release
 
 Then all artifacts will be built into `build` subdirectory.
 
-> NOTE: For Windows 32-bit, you need to use `-A Win32` and `-DVCPKG_TRIPLET=x86-windows`.
+> **NOTE**
 >
+> 1. For Windows 32-bit, you need to use `-A Win32` and `-DVCPKG_TRIPLET=x86-windows`.
+> 2. For MSVC Debug mode, you need to replace `Release` with `Debug` for both `CMAKE_BUILD_TYPE` variable and `--config` option.
 
 #### Install dependencies manually
 
@@ -233,6 +235,26 @@ ${PULSAR_PATH}/pulsar-client-cpp/cmake -DPROTOC_PATH=C:/protobuf/bin/protoc -DCM
 #This will generate pulsar-cpp.sln. Open this in Visual Studio and build the desired configurations.
 ```
 
+#### Checks
+
+##### Client libraries are available in the following places.
+```
+${PULSAR_PATH}/pulsar-client-cpp/build/lib/Release/pulsar.lib
+${PULSAR_PATH}/pulsar-client-cpp/build/lib/Release/pulsar.dll
+```
+
+#### Examples
+
+##### Add windows environment paths.
+```
+${PULSAR_PATH}/pulsar-client-cpp/build/lib/Release
+${PULSAR_PATH}/pulsar-client-cpp/vcpkg_installed
+```
+
+##### Examples are available in.
+```
+${PULSAR_PATH}/pulsar-client-cpp/build/examples/Release
+```
 
 ## Tests
 ```shell
@@ -255,3 +277,23 @@ ${PULSAR_PATH}/pulsar-test-service-stop.sh
 It's recommended to install [LLVM](https://llvm.org/builds/) for `clang-tidy` and `clang-format`. Pulsar C++ client use `clang-format` 5.0 to format files, which is a little different with latest `clang-format`.
 
 We welcome contributions from the open source community, kindly make sure your changes are backward compatible with GCC 4.8 and Boost 1.53.
+
+### Install `clang-format` on macOS
+
+`homebrew-core` does not have `clang-format@5`. You can install `clang-format@5` on your macOS using the tap below.
+```shell
+# Step 1: Add tap
+brew tap demogorgon314/clang-format
+
+# Step 2: Install clang-format@5
+brew install clang-format@5
+```
+### Install `clang-format` on Ubuntu 18.04
+You can find pre-built binaries on the LLVM website: https://releases.llvm.org/download.html#5.0.2
+
+Or you want to use apt install clang-format-5.0.
+```shell
+sudo apt update
+sudo apt install clang-format-5.0
+```
+

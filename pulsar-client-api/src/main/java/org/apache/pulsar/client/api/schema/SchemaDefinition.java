@@ -37,7 +37,7 @@ public interface SchemaDefinition<T> {
      * @return the {@link SchemaDefinition}
      */
     static <T> SchemaDefinitionBuilder<T> builder() {
-        return DefaultImplementation.newSchemaDefinitionBuilder();
+        return DefaultImplementation.getDefaultImplementation().newSchemaDefinitionBuilder();
     }
 
     /**

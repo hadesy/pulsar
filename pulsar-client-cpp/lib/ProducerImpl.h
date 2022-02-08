@@ -47,12 +47,13 @@ class PulsarFriend;
 
 class Producer;
 class MemoryLimitController;
+class TopicName;
 
 class ProducerImpl : public HandlerBase,
                      public std::enable_shared_from_this<ProducerImpl>,
                      public ProducerImplBase {
    public:
-    ProducerImpl(ClientImplPtr client, const std::string& topic,
+    ProducerImpl(ClientImplPtr client, const TopicName& topic,
                  const ProducerConfiguration& producerConfiguration, int32_t partition = -1);
     ~ProducerImpl();
 
@@ -70,6 +71,8 @@ class ProducerImpl : public HandlerBase,
     void triggerFlush() override;
     void flushAsync(FlushCallback callback) override;
     bool isConnected() const override;
+    uint64_t getNumberOfConnectedProducer() override;
+    bool isStarted() const;
 
     bool removeCorruptMessage(uint64_t sequenceId);
 
@@ -81,6 +84,8 @@ class ProducerImpl : public HandlerBase,
 
     int32_t partition() const noexcept { return partition_; }
 
+    static int getNumOfChunks(uint32_t size, uint32_t maxMessageSize);
+
    protected:
     ProducerStatsBasePtr producerStatsBasePtr_;
 
@@ -91,6 +96,8 @@ class ProducerImpl : public HandlerBase,
     void sendMessage(const OpSendMsg& opSendMsg);
 
     void batchMessageTimeoutHandler(const boost::system::error_code& ec);
+
+    void startSendTimeoutTimer();
 
     friend class PulsarFriend;
 
@@ -111,8 +118,6 @@ class ProducerImpl : public HandlerBase,
     void handleCreateProducer(const ClientConnectionPtr& cnx, Result result,
                               const ResponseData& responseData);
 
-    void statsCallBackHandler(Result, const MessageId&, SendCallback, boost::posix_time::ptime);
-
     void handleClose(Result result, ResultCallback callback, ProducerImplPtr producer);
 
     void resendMessages(ClientConnectionPtr cnx);
@@ -121,11 +126,25 @@ class ProducerImpl : public HandlerBase,
     bool encryptMessage(proto::MessageMetadata& metadata, SharedBuffer& payload,
                         SharedBuffer& encryptedPayload);
 
+    void sendAsyncWithStatsUpdate(const Message& msg, const SendCallback& callback);
+
+    /**
+     * Reserve a spot in the messages queue before acquiring the ProducerImpl mutex. When the queue is full,
+     * this call will block until a spot is available if blockIfQueueIsFull is true. Otherwise, it will return
+     * ResultProducerQueueIsFull immediately.
+     *
+     * It also checks whether the memory could reach the limit after `payloadSize` is added. If so, this call
+     * will block until enough memory could be retained.
+     */
     Result canEnqueueRequest(uint32_t payloadSize);
+
     void releaseSemaphore(uint32_t payloadSize);
     void releaseSemaphoreForSendOp(const OpSendMsg& op);
 
     void cancelTimers();
+
+    bool isValidProducerState(const SendCallback& callback) const;
+    bool canAddToBatch(const Message& msg) const;
 
     typedef std::unique_lock<std::mutex> Lock;
 
@@ -134,7 +153,7 @@ class ProducerImpl : public HandlerBase,
     std::unique_ptr<Semaphore> semaphore_;
     MessageQueue pendingMessagesQueue_;
 
-    int32_t partition_;  // -1 if topic is non-partitioned
+    const int32_t partition_;  // -1 if topic is non-partitioned
     std::string producerName_;
     bool userProvidedProducerName_;
     std::string producerStr_;
@@ -158,13 +177,14 @@ class ProducerImpl : public HandlerBase,
     std::shared_ptr<PendingCallbacks> getPendingCallbacksWhenFailed();
     std::shared_ptr<PendingCallbacks> getPendingCallbacksWhenFailedWithLock();
 
-    void failPendingMessages(Result result);
+    void failPendingMessages(Result result, bool withLock);
 
     MessageCryptoPtr msgCrypto_;
     DeadlineTimerPtr dataKeyGenTImer_;
     uint32_t dataKeyGenIntervalSec_;
 
     MemoryLimitController& memoryLimitController_;
+    const bool chunkingEnabled_;
 };
 
 struct ProducerImplCmp {

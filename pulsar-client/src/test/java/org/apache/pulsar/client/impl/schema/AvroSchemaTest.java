@@ -35,6 +35,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.UUID;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.avro.Schema;
@@ -423,4 +424,39 @@ public class AvroSchemaTest {
         assertEquals(field1, foo.getField1());
     }
 
+    static class MyPojo {
+        public UUID uid;
+    }
+
+    @Test
+    public void testAvroUUID() {
+        org.apache.pulsar.client.api.Schema<MyPojo> schema = org.apache.pulsar.client.api.Schema.AVRO(MyPojo.class);
+        MyPojo pojo1 = new MyPojo();
+        pojo1.uid = UUID.randomUUID();
+        MyPojo pojo2 = schema.decode(schema.encode(pojo1));
+        assertEquals(pojo1.uid, pojo2.uid);
+    }
+
+    static class MyBigDecimalPojo {
+        public BigDecimal value1;
+        @org.apache.avro.reflect.AvroSchema("{\n" +
+                "  \"type\": \"bytes\",\n" +
+                "  \"logicalType\": \"decimal\",\n" +
+                "  \"precision\": 4,\n" +
+                "  \"scale\": 2\n" +
+                "}")
+        public BigDecimal value2;
+    }
+
+    @Test
+    public void testAvroBigDecimal() {
+        org.apache.pulsar.client.api.Schema<MyBigDecimalPojo> schema =
+                org.apache.pulsar.client.api.Schema.AVRO(MyBigDecimalPojo.class);
+        MyBigDecimalPojo myBigDecimalPojo = new MyBigDecimalPojo();
+        myBigDecimalPojo.value1 = new BigDecimal("10.21");
+        myBigDecimalPojo.value2 = new BigDecimal("10.22");
+        MyBigDecimalPojo pojo2 = schema.decode(schema.encode(myBigDecimalPojo));
+        assertEquals(pojo2.value1, myBigDecimalPojo.value1);
+        assertEquals(pojo2.value2, myBigDecimalPojo.value2);
+    }
 }

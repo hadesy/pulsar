@@ -46,6 +46,7 @@
 #include <set>
 #include <lib/BrokerConsumerStatsImpl.h>
 #include "lib/PeriodicTask.h"
+#include "lib/GetLastMessageIdResponse.h"
 
 using namespace pulsar;
 
@@ -113,7 +114,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
      */
     void tcpConnectAsync();
 
-    void close();
+    void close(Result result = ResultConnectError);
 
     bool isClosed() const;
 
@@ -156,7 +157,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
 
     Future<Result, BrokerConsumerStatsImpl> newConsumerStats(uint64_t consumerId, uint64_t requestId);
 
-    Future<Result, MessageId> newGetLastMessageId(uint64_t consumerId, uint64_t requestId);
+    Future<Result, GetLastMessageIdResponse> newGetLastMessageId(uint64_t consumerId, uint64_t requestId);
 
     Future<Result, NamespaceTopicsPtr> newGetTopicsOfNamespace(const std::string& nsName, uint64_t requestId);
 
@@ -193,6 +194,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     bool verifyChecksum(SharedBuffer& incomingBuffer_, uint32_t& remainingBytes,
                         proto::BaseCommand& incomingCmd_);
 
+    void handleActiveConsumerChange(const proto::CommandActiveConsumerChange& change);
     void handleIncomingCommand();
     void handleIncomingMessage(const proto::CommandMessage& msg, bool isChecksumValid,
                                proto::MessageMetadata& msgMetadata, SharedBuffer& payload);
@@ -249,7 +251,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
         }
     }
 
-    State state_;
+    State state_ = Pending;
     TimeDuration operationsTimeout_;
     AuthenticationPtr authentication_;
     int serverProtocolVersion_;
@@ -264,9 +266,13 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
      */
     SocketPtr socket_;
     TlsSocketPtr tlsSocket_;
+#if BOOST_VERSION >= 106600
+    boost::asio::strand<boost::asio::io_service::executor_type> strand_;
+#else
+    boost::asio::io_service::strand strand_;
+#endif
 
     const std::string logicalAddress_;
-
     /*
      *  stores address of the service, for ex. pulsar://localhost:6650
      */
@@ -301,7 +307,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     typedef std::map<uint64_t, Promise<Result, BrokerConsumerStatsImpl>> PendingConsumerStatsMap;
     PendingConsumerStatsMap pendingConsumerStatsMap_;
 
-    typedef std::map<long, Promise<Result, MessageId>> PendingGetLastMessageIdRequestsMap;
+    typedef std::map<long, Promise<Result, GetLastMessageIdResponse>> PendingGetLastMessageIdRequestsMap;
     PendingGetLastMessageIdRequestsMap pendingGetLastMessageIdRequests_;
 
     typedef std::map<long, Promise<Result, NamespaceTopicsPtr>> PendingGetNamespaceTopicsMap;
@@ -312,7 +318,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
 
     // Pending buffers to write on the socket
     std::deque<boost::any> pendingWriteBuffers_;
-    int pendingWriteOperations_;
+    int pendingWriteOperations_ = 0;
 
     SharedBuffer outgoingBuffer_;
     proto::BaseCommand outgoingCmd_;
@@ -321,7 +327,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     HandlerAllocator writeHandlerAllocator_;
 
     // Signals whether we're waiting for a response from broker
-    bool havePendingPingRequest_;
+    bool havePendingPingRequest_ = false;
     DeadlineTimerPtr keepAliveTimer_;
     DeadlineTimerPtr consumerStatsRequestTimer_;
 
@@ -330,16 +336,10 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
 
     void startConsumerStatsTimer(std::vector<uint64_t> consumerStatsRequests);
     uint32_t maxPendingLookupRequest_;
-    uint32_t numOfPendingLookupRequest_;
+    uint32_t numOfPendingLookupRequest_ = 0;
     friend class PulsarFriend;
 
-    bool isTlsAllowInsecureConnection_;
-
-#if BOOST_VERSION >= 106600
-    boost::asio::strand<boost::asio::io_service::executor_type> strand_;
-#else
-    boost::asio::io_service::strand strand_;
-#endif
+    bool isTlsAllowInsecureConnection_ = false;
 };
 }  // namespace pulsar
 

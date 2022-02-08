@@ -18,12 +18,12 @@
  */
 package org.apache.pulsar.client.impl;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.client.api.Authentication;
 import org.apache.pulsar.client.api.AuthenticationFactory;
@@ -51,7 +51,8 @@ public class ClientBuilderImpl implements ClientBuilder {
     @Override
     public PulsarClient build() throws PulsarClientException {
         if (StringUtils.isBlank(conf.getServiceUrl()) && conf.getServiceUrlProvider() == null) {
-            throw new IllegalArgumentException("service URL or service URL provider needs to be specified on the ClientBuilder object.");
+            throw new IllegalArgumentException(
+                    "service URL or service URL provider needs to be specified on the ClientBuilder object.");
         }
         if (StringUtils.isNotBlank(conf.getServiceUrl()) && conf.getServiceUrlProvider() != null) {
             throw new IllegalArgumentException("Can only chose one way service URL or service URL provider.");
@@ -140,24 +141,34 @@ public class ClientBuilderImpl implements ClientBuilder {
 
     @Override
     public ClientBuilder operationTimeout(int operationTimeout, TimeUnit unit) {
+        checkArgument(operationTimeout >= 0, "operationTimeout needs to be >= 0");
         conf.setOperationTimeoutMs(unit.toMillis(operationTimeout));
         return this;
     }
 
     @Override
+    public ClientBuilder lookupTimeout(int lookupTimeout, TimeUnit unit) {
+        conf.setLookupTimeoutMs(unit.toMillis(lookupTimeout));
+        return this;
+    }
+
+    @Override
     public ClientBuilder ioThreads(int numIoThreads) {
+        checkArgument(numIoThreads > 0, "ioThreads needs to be > 0");
         conf.setNumIoThreads(numIoThreads);
         return this;
     }
 
     @Override
     public ClientBuilder listenerThreads(int numListenerThreads) {
+        checkArgument(numListenerThreads > 0, "listenerThreads needs to be > 0");
         conf.setNumListenerThreads(numListenerThreads);
         return this;
     }
 
     @Override
     public ClientBuilder connectionsPerBroker(int connectionsPerBroker) {
+        checkArgument(connectionsPerBroker >= 0, "connectionsPerBroker needs to be >= 0");
         conf.setConnectionsPerBroker(connectionsPerBroker);
         return this;
     }
@@ -266,26 +277,26 @@ public class ClientBuilderImpl implements ClientBuilder {
 
     @Override
     public ClientBuilder keepAliveInterval(int keepAliveInterval, TimeUnit unit) {
-        conf.setKeepAliveIntervalSeconds((int)unit.toSeconds(keepAliveInterval));
+        conf.setKeepAliveIntervalSeconds((int) unit.toSeconds(keepAliveInterval));
         return this;
     }
 
     @Override
     public ClientBuilder connectionTimeout(int duration, TimeUnit unit) {
-        conf.setConnectionTimeoutMs((int)unit.toMillis(duration));
+        conf.setConnectionTimeoutMs((int) unit.toMillis(duration));
         return this;
     }
 
     @Override
     public ClientBuilder startingBackoffInterval(long duration, TimeUnit unit) {
-    	conf.setInitialBackoffIntervalNanos(unit.toNanos(duration));
-    	return this;
+        conf.setInitialBackoffIntervalNanos(unit.toNanos(duration));
+        return this;
     }
 
     @Override
     public ClientBuilder maxBackoffInterval(long duration, TimeUnit unit) {
-    	conf.setMaxBackoffIntervalNanos(unit.toNanos(duration));
-    	return this;
+        conf.setMaxBackoffIntervalNanos(unit.toNanos(duration));
+        return this;
     }
 
     @Override
@@ -323,6 +334,14 @@ public class ClientBuilderImpl implements ClientBuilder {
     @Override
     public ClientBuilder enableTransaction(boolean enableTransaction) {
         conf.setEnableTransaction(enableTransaction);
+        return this;
+    }
+
+    @Override
+    public ClientBuilder dnsLookupBind(String address, int port) {
+        checkArgument(port >= 0 && port <= 65535, "DnsLookBindPort need to be within the range of 0 and 65535");
+        conf.setDnsLookupBindAddress(address);
+        conf.setDnsLookupBindPort(port);
         return this;
     }
 

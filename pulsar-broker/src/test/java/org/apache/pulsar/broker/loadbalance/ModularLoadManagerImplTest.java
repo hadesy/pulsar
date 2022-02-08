@@ -26,13 +26,11 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.BoundType;
 import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.common.hash.Hashing;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
@@ -47,9 +45,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.pulsar.broker.BrokerData;
 import org.apache.pulsar.broker.BundleData;
 import org.apache.pulsar.broker.PulsarServerException;
@@ -69,7 +65,6 @@ import org.apache.pulsar.common.naming.NamespaceBundles;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.ServiceUnitId;
 import org.apache.pulsar.common.policies.data.ClusterData;
-import org.apache.pulsar.common.policies.data.ClusterDataImpl;
 import org.apache.pulsar.common.policies.data.NamespaceIsolationDataImpl;
 import org.apache.pulsar.common.policies.data.TenantInfoImpl;
 import org.apache.pulsar.common.util.ObjectMapperFactory;
@@ -146,6 +141,7 @@ public class ModularLoadManagerImplTest {
         // Start broker 1
         ServiceConfiguration config1 = new ServiceConfiguration();
         config1.setLoadManagerClassName(ModularLoadManagerImpl.class.getName());
+        config1.setLoadBalancerLoadSheddingStrategy("org.apache.pulsar.broker.loadbalance.impl.OverloadShedder");
         config1.setClusterName("use");
         config1.setWebServicePort(Optional.of(0));
         config1.setZookeeperServers("127.0.0.1" + ":" + bkEnsemble.getZookeeperPort());
@@ -165,6 +161,7 @@ public class ModularLoadManagerImplTest {
         // Start broker 2
         ServiceConfiguration config2 = new ServiceConfiguration();
         config2.setLoadManagerClassName(ModularLoadManagerImpl.class.getName());
+        config2.setLoadBalancerLoadSheddingStrategy("org.apache.pulsar.broker.loadbalance.impl.OverloadShedder");
         config2.setClusterName("use");
         config2.setWebServicePort(Optional.of(0));
         config2.setZookeeperServers("127.0.0.1" + ":" + bkEnsemble.getZookeeperPort());
@@ -238,11 +235,8 @@ public class ModularLoadManagerImplTest {
 
         LoadData loadData = (LoadData) getField(primaryLoadManager, "loadData");
 
-        // Give some time for the watch to fire.
-        Thread.sleep(500);
-
         // Make sure the second broker is not in the internal map.
-        assertFalse(loadData.getBrokerData().containsKey(secondaryHost));
+        Awaitility.await().untilAsserted(() -> assertFalse(loadData.getBrokerData().containsKey(secondaryHost)));
 
         // Try 5 more selections, ensure they all go to the first broker.
         for (int i = 2; i < 7; ++i) {
@@ -341,7 +335,7 @@ public class ModularLoadManagerImplTest {
         when(brokerDataSpy1.getLocalData()).thenReturn(localBrokerData);
         brokerDataMap.put(primaryHost, brokerDataSpy1);
         // Need to update all the bundle data for the shredder to see the spy.
-        primaryLoadManager.accept(new Notification(NotificationType.Created, LoadManager.LOADBALANCE_BROKERS_ROOT + "/broker:8080"));
+        primaryLoadManager.handleDataNotification(new Notification(NotificationType.Created, LoadManager.LOADBALANCE_BROKERS_ROOT + "/broker:8080"));
 
         Thread.sleep(100);
         localBrokerData.setCpu(new ResourceUsage(80, 100));
@@ -350,7 +344,7 @@ public class ModularLoadManagerImplTest {
         // 80% is below overload threshold: verify nothing is unloaded.
         verify(namespacesSpy1, Mockito.times(0)).unloadNamespaceBundle(Mockito.anyString(), Mockito.anyString());
 
-        localBrokerData.getCpu().usage = 90;
+        localBrokerData.setCpu(new ResourceUsage(90, 100));
         primaryLoadManager.doLoadShedding();
         // Most expensive bundle will be unloaded.
         verify(namespacesSpy1, Mockito.times(1)).unloadNamespaceBundle(Mockito.anyString(), Mockito.anyString());
@@ -420,17 +414,13 @@ public class ModularLoadManagerImplTest {
         assert (!needUpdate.get());
 
         // Minimally test other absolute values to ensure they are included.
-        lastData.getCpu().usage = 100;
-        lastData.getCpu().limit = 1000;
-        currentData.getCpu().usage = 106;
-        currentData.getCpu().limit = 1000;
+        lastData.setCpu(new ResourceUsage(100, 1000));
+        currentData.setCpu(new ResourceUsage(106, 1000));
         assert (!needUpdate.get());
 
         // Minimally test other absolute values to ensure they are included.
-        lastData.getCpu().usage = 100;
-        lastData.getCpu().limit = 1000;
-        currentData.getCpu().usage = 206;
-        currentData.getCpu().limit = 1000;
+        lastData.setCpu(new ResourceUsage(100, 1000));
+        currentData.setCpu(new ResourceUsage(206, 1000));
         assert (needUpdate.get());
 
         lastData.setCpu(new ResourceUsage());

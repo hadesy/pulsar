@@ -45,12 +45,18 @@ public class EventsTopicNames {
             Collections.unmodifiableSet(Sets.newHashSet(NAMESPACE_EVENTS_LOCAL_NAME, TRANSACTION_BUFFER_SNAPSHOT));
 
     public static boolean checkTopicIsEventsNames(TopicName topicName) {
-        String name;
-        if (topicName.isPartitioned()) {
-            name = TopicName.get(topicName.getPartitionedTopicName()).getLocalName();
-        } else {
-            name = topicName.getLocalName();
+        return EVENTS_TOPIC_NAMES.contains(TopicName.get(topicName.getPartitionedTopicName()).getLocalName());
+    }
+
+    public static boolean checkTopicIsTransactionCoordinatorAssign(TopicName topicName) {
+        return topicName != null && topicName.toString()
+                .startsWith(TopicName.TRANSACTION_COORDINATOR_ASSIGN.toString());
+    }
+
+    public static boolean isTopicPoliciesSystemTopic(String topic) {
+        if (topic == null) {
+            return false;
         }
-        return EVENTS_TOPIC_NAMES.contains(name);
+        return TopicName.get(topic).getLocalName().equals(NAMESPACE_EVENTS_LOCAL_NAME);
     }
 }

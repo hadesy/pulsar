@@ -51,7 +51,6 @@ public class PulsarOffsetBackingStore implements OffsetBackingStore {
 
     private Map<ByteBuffer, ByteBuffer> data;
     private PulsarClient client;
-    private String serviceUrl;
     private String topic;
     private Producer<byte[]> producer;
     private Reader<byte[]> reader;
@@ -68,8 +67,7 @@ public class PulsarOffsetBackingStore implements OffsetBackingStore {
         checkArgument(!isBlank(topic), "Offset storage topic must be specified");
         this.data = new HashMap<>();
 
-        log.info("Configure offset backing store on pulsar topic {} at cluster {}",
-            topic, serviceUrl);
+        log.info("Configure offset backing store on pulsar topic {}", topic);
     }
 
     void readToEnd(CompletableFuture<Void> future) {
@@ -153,19 +151,26 @@ public class PulsarOffsetBackingStore implements OffsetBackingStore {
             readToEnd(endFuture);
             endFuture.join();
         } catch (PulsarClientException e) {
-            log.error("Failed to setup pulsar producer/reader to cluster at {}", serviceUrl, e);
-            throw new RuntimeException("Failed to setup pulsar producer/reader to cluster at " + serviceUrl, e);
+            log.error("Failed to setup pulsar producer/reader to cluster", e);
+            throw new RuntimeException("Failed to setup pulsar producer/reader to cluster ",  e);
         }
     }
 
     @Override
     public void stop() {
+        log.info("Stopping PulsarOffsetBackingStore");
         if (null != producer) {
+            try {
+                producer.flush();
+            } catch (PulsarClientException pce) {
+                log.warn("Failed to flush the producer", pce);
+            }
             try {
                 producer.close();
             } catch (PulsarClientException e) {
                 log.warn("Failed to close producer", e);
             }
+            producer = null;
         }
         if (null != reader) {
             try {
@@ -173,12 +178,14 @@ public class PulsarOffsetBackingStore implements OffsetBackingStore {
             } catch (IOException e) {
                 log.warn("Failed to close reader", e);
             }
+            reader = null;
         }
+
+        // do not close the client, it is provided by the sink context
     }
 
     @Override
-    public Future<Map<ByteBuffer, ByteBuffer>> get(Collection<ByteBuffer> keys,
-                                                   Callback<Map<ByteBuffer, ByteBuffer>> callback) {
+    public Future<Map<ByteBuffer, ByteBuffer>> get(Collection<ByteBuffer> keys) {
         CompletableFuture<Void> endFuture = new CompletableFuture<>();
         readToEnd(endFuture);
         return endFuture.thenApply(ignored -> {
@@ -192,14 +199,7 @@ public class PulsarOffsetBackingStore implements OffsetBackingStore {
                     values.put(key, value);
                 }
             }
-            if (null != callback) {
-                callback.onCompletion(null, values);
-            }
             return values;
-        }).whenComplete((ignored, cause) -> {
-            if (null != cause && null != callback) {
-                callback.onCompletion(cause, null);
-            }
         });
     }
 

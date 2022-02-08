@@ -22,6 +22,7 @@ import com.beust.jcommander.DefaultUsageFormatter;
 import com.beust.jcommander.IUsageFormatter;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
+import com.beust.jcommander.ParameterException;
 import com.beust.jcommander.Parameters;
 import com.google.common.base.Charsets;
 import io.jsonwebtoken.Claims;
@@ -44,6 +45,7 @@ import java.util.concurrent.TimeUnit;
 import javax.crypto.SecretKey;
 import lombok.Cleanup;
 import org.apache.pulsar.broker.authentication.utils.AuthTokenUtils;
+import org.apache.pulsar.common.util.CmdGenerateDocs;
 import org.apache.pulsar.common.util.RelativeTimeUtil;
 
 public class TokensCliUtils {
@@ -154,8 +156,13 @@ public class TokensCliUtils {
 
             Optional<Date> optExpiryTime = Optional.empty();
             if (expiryTime != null) {
-                long relativeTimeMillis = TimeUnit.SECONDS
-                        .toMillis(RelativeTimeUtil.parseRelativeTimeInSeconds(expiryTime));
+                long relativeTimeMillis;
+                try {
+                    relativeTimeMillis = TimeUnit.SECONDS.toMillis(
+                            RelativeTimeUtil.parseRelativeTimeInSeconds(expiryTime));
+                } catch (IllegalArgumentException exception) {
+                    throw new ParameterException(exception.getMessage());
+                }
                 optExpiryTime = Optional.of(new Date(System.currentTimeMillis() + relativeTimeMillis));
             }
 
@@ -275,8 +282,9 @@ public class TokensCliUtils {
 
             // Validate the token
             @SuppressWarnings("unchecked")
-            Jwt<?, Claims> jwt = Jwts.parser()
+            Jwt<?, Claims> jwt = Jwts.parserBuilder()
                     .setSigningKey(validationKey)
+                    .build()
                     .parse(token);
 
             System.out.println(jwt.getBody());
@@ -302,6 +310,8 @@ public class TokensCliUtils {
 
         CommandValidateToken commandValidateToken = new CommandValidateToken();
         jcommander.addCommand("validate", commandValidateToken);
+
+        jcommander.addCommand("gen-doc", new Object());
 
         try {
             jcommander.parse(args);
@@ -329,6 +339,10 @@ public class TokensCliUtils {
             commandShowToken.run();
         } else if (cmd.equals("validate")) {
             commandValidateToken.run();
+        } else if (cmd.equals("gen-doc")) {
+            CmdGenerateDocs genDocCmd = new CmdGenerateDocs("pulsar");
+            genDocCmd.addCommand("tokens", jcommander);
+            genDocCmd.run(null);
         } else {
             System.err.println("Invalid command: " + cmd);
             System.exit(1);

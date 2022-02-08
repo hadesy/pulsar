@@ -18,25 +18,31 @@
  */
 package org.apache.pulsar.common.policies.data.stats;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.AccessLevel;
 import lombok.Data;
 import lombok.Getter;
+import lombok.Setter;
 import org.apache.pulsar.common.policies.data.PublisherStats;
 import org.apache.pulsar.common.policies.data.ReplicatorStats;
 import org.apache.pulsar.common.policies.data.SubscriptionStats;
 import org.apache.pulsar.common.policies.data.TopicStats;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * Statistics for a Pulsar topic.
  */
 @Data
 public class TopicStatsImpl implements TopicStats {
+    @JsonIgnore
     private int count;
 
     /** Total rate of messages published on the topic (msg/s). */
@@ -75,12 +81,32 @@ public class TopicStatsImpl implements TopicStats {
     /** Get estimated total unconsumed or backlog size in bytes. */
     public long backlogSize;
 
+    /** The number of times the publishing rate limit was triggered. */
+    public long publishRateLimitedTimes;
+
+    /** Get the publish time of the earliest message over all the backlogs. */
+    public long earliestMsgPublishTimeInBacklogs;
+
     /** Space used to store the offloaded messages for the topic/. */
     public long offloadedStorageSize;
 
+    /** record last successful offloaded ledgerId. If no offload ledger, the value should be 0 */
+    public long lastOffloadLedgerId;
+
+    /** record last successful offloaded timestamp. If no successful offload, the value should be 0 */
+    public long lastOffloadSuccessTimeStamp;
+
+    /** record last failed offloaded timestamp. If no failed offload, the value should be 0 */
+    public long lastOffloadFailureTimeStamp;
+
     /** List of connected publishers on this topic w/ their stats. */
     @Getter(AccessLevel.NONE)
-    public List<PublisherStatsImpl> publishers;
+    @Setter(AccessLevel.NONE)
+    private List<PublisherStatsImpl> publishers;
+
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private Map<String, PublisherStatsImpl> publishersMap;
 
     public int waitingPublishers;
 
@@ -103,8 +129,27 @@ public class TopicStatsImpl implements TopicStats {
     /** The serialized size of non-contiguous deleted messages ranges. */
     public int nonContiguousDeletedMessagesRangesSerializedSize;
 
+    /** The compaction stats. */
+    public CompactionStatsImpl compaction;
+
     public List<? extends PublisherStats> getPublishers() {
-        return publishers;
+        return Stream.concat(publishers.stream().sorted(Comparator.comparing(PublisherStatsImpl::getProducerName)),
+                publishersMap.values().stream().sorted(Comparator.comparing(PublisherStatsImpl::getProducerName)))
+                .collect(Collectors.toList());
+    }
+
+    public void setPublishers(List<? extends PublisherStats> statsList) {
+        this.publishers.clear();
+        this.publishersMap.clear();
+        statsList.forEach(s -> addPublisher((PublisherStatsImpl) s));
+    }
+
+    public void addPublisher(PublisherStatsImpl stats) {
+        if (stats.isSupportsPartialProducer()) {
+            publishersMap.put(stats.getProducerName(), stats);
+        } else {
+            publishers.add(stats);
+        }
     }
 
     public Map<String, ? extends SubscriptionStats> getSubscriptions() {
@@ -117,8 +162,10 @@ public class TopicStatsImpl implements TopicStats {
 
     public TopicStatsImpl() {
         this.publishers = new ArrayList<>();
+        this.publishersMap = new ConcurrentHashMap<>();
         this.subscriptions = new HashMap<>();
         this.replication = new TreeMap<>();
+        this.compaction = new CompactionStatsImpl();
     }
 
     public void reset() {
@@ -135,6 +182,7 @@ public class TopicStatsImpl implements TopicStats {
         this.bytesOutCounter = 0;
         this.msgOutCounter = 0;
         this.publishers.clear();
+        this.publishersMap.clear();
         this.subscriptions.clear();
         this.waitingPublishers = 0;
         this.replication.clear();
@@ -143,6 +191,11 @@ public class TopicStatsImpl implements TopicStats {
         this.nonContiguousDeletedMessagesRanges = 0;
         this.nonContiguousDeletedMessagesRangesSerializedSize = 0;
         this.offloadedStorageSize = 0;
+        this.lastOffloadLedgerId = 0;
+        this.lastOffloadFailureTimeStamp = 0;
+        this.lastOffloadSuccessTimeStamp = 0;
+        this.publishRateLimitedTimes = 0L;
+        this.compaction.reset();
     }
 
     // if the stats are added for the 1st time, we will need to make a copy of these stats and add it to the current
@@ -164,19 +217,34 @@ public class TopicStatsImpl implements TopicStats {
         this.averageMsgSize = newAverageMsgSize;
         this.storageSize += stats.storageSize;
         this.backlogSize += stats.backlogSize;
+        this.publishRateLimitedTimes += stats.publishRateLimitedTimes;
         this.offloadedStorageSize += stats.offloadedStorageSize;
         this.nonContiguousDeletedMessagesRanges += stats.nonContiguousDeletedMessagesRanges;
         this.nonContiguousDeletedMessagesRangesSerializedSize += stats.nonContiguousDeletedMessagesRangesSerializedSize;
-        if (this.publishers.size() != stats.publishers.size()) {
-            for (int i = 0; i < stats.publishers.size(); i++) {
-                PublisherStatsImpl publisherStats = new PublisherStatsImpl();
-                this.publishers.add(publisherStats.add(stats.publishers.get(i)));
-            }
-        } else {
-            for (int i = 0; i < stats.publishers.size(); i++) {
-                this.publishers.get(i).add(stats.publishers.get(i));
-            }
-        }
+
+        stats.getPublishers().forEach(s -> {
+           if (s.isSupportsPartialProducer()) {
+               this.publishersMap.computeIfAbsent(s.getProducerName(), key -> {
+                   final PublisherStatsImpl newStats = new PublisherStatsImpl();
+                   newStats.setSupportsPartialProducer(true);
+                   newStats.setProducerName(s.getProducerName());
+                   return newStats;
+               }).add((PublisherStatsImpl) s);
+           } else {
+               if (this.publishers.size() != stats.publishers.size()) {
+                   for (int i = 0; i < stats.publishers.size(); i++) {
+                       PublisherStatsImpl newStats = new PublisherStatsImpl();
+                       newStats.setSupportsPartialProducer(false);
+                       this.publishers.add(newStats.add(stats.publishers.get(i)));
+                   }
+               } else {
+                   for (int i = 0; i < stats.publishers.size(); i++) {
+                       this.publishers.get(i).add(stats.publishers.get(i));
+                   }
+               }
+           }
+        });
+
         if (this.subscriptions.size() != stats.subscriptions.size()) {
             for (String subscription : stats.subscriptions.keySet()) {
                 SubscriptionStatsImpl subscriptionStats = new SubscriptionStatsImpl();
@@ -209,5 +277,4 @@ public class TopicStatsImpl implements TopicStats {
         }
         return this;
     }
-
 }

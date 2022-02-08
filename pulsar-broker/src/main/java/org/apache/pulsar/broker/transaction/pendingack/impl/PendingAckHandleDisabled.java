@@ -97,8 +97,7 @@ public class PendingAckHandleDisabled implements PendingAckHandle {
     }
 
     @Override
-    public boolean isTransactionAckPresent() {
+    public boolean checkIfPendingAckStoreInit() {
         return false;
     }
-
 }

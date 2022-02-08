@@ -19,16 +19,12 @@
 package org.apache.pulsar.client.impl;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Maps;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.util.Recycler;
-import io.netty.util.ReferenceCountUtil;
 import io.netty.util.Recycler.Handle;
-
+import io.netty.util.ReferenceCountUtil;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Base64;
@@ -36,9 +32,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Schema;
@@ -64,6 +60,7 @@ public class MessageImpl<T> implements Message<T> {
     private ByteBuf payload;
 
     private Schema<T> schema;
+    private SchemaInfo schemaInfoForReplicator;
     private SchemaState schemaState = SchemaState.None;
     private Optional<EncryptionContext> encryptionCtx = Optional.empty();
 
@@ -75,15 +72,16 @@ public class MessageImpl<T> implements Message<T> {
     private BrokerEntryMetadata brokerEntryMetadata;
 
     private boolean poolMessage;
-    
+
     // Constructor for out-going message
-    public static <T> MessageImpl<T> create(MessageMetadata msgMetadata, ByteBuffer payload, Schema<T> schema) {
+    public static <T> MessageImpl<T> create(MessageMetadata msgMetadata, ByteBuffer payload, Schema<T> schema,
+            String topic) {
         @SuppressWarnings("unchecked")
         MessageImpl<T> msg = (MessageImpl<T>) RECYCLER.get();
         msg.msgMetadata.clear();
         msg.msgMetadata.copyFrom(msgMetadata);
         msg.messageId = null;
-        msg.topic = null;
+        msg.topic = topic;
         msg.cnx = null;
         msg.payload = Unpooled.wrappedBuffer(payload);
         msg.properties = null;
@@ -164,7 +162,7 @@ public class MessageImpl<T> implements Message<T> {
                 encryptionCtx, cnx, schema, redeliveryCount, poolMessage);
         msg.messageId = messageId;
     }
-    
+
     private static <T> void init(MessageImpl<T> msg, String topic, BatchMessageIdImpl batchMessageIdImpl,
             MessageMetadata msgMetadata, SingleMessageMetadata singleMessageMetadata, ByteBuf payload,
             Optional<EncryptionContext> encryptionCtx, ClientCnx cnx, Schema<T> schema, int redeliveryCount,
@@ -179,15 +177,15 @@ public class MessageImpl<T> implements Message<T> {
         msg.schema = schema;
 
         msg.poolMessage = poolMessage;
-        // If it's not pool message then need to make a copy since the passed payload is 
-        // using a ref-count buffer that we don't know when could release, since the 
-        // Message is passed to the user. Also, the passed ByteBuf is coming from network 
+        // If it's not pool message then need to make a copy since the passed payload is
+        // using a ref-count buffer that we don't know when could release, since the
+        // Message is passed to the user. Also, the passed ByteBuf is coming from network
         // and is backed by a direct buffer which we could not expose as a byte[]
         msg.payload = poolMessage ? payload.retain() : Unpooled.copiedBuffer(payload);
-        
+
         if (singleMessageMetadata != null) {
             if (singleMessageMetadata.getPropertiesCount() > 0) {
-                Map<String, String> properties = Maps.newTreeMap();
+                Map<String, String> properties = new TreeMap<>();
                 for (KeyValue entry : singleMessageMetadata.getPropertiesList()) {
                     properties.put(entry.getKey(), entry.getValue());
                 }
@@ -231,7 +229,7 @@ public class MessageImpl<T> implements Message<T> {
             msg.properties = Collections.emptyMap();
         }
     }
-    
+
     public MessageImpl(String topic, String msgId, Map<String, String> properties,
             byte[] payload, Schema<T> schema, MessageMetadata msgMetadata) {
         this(topic, msgId, properties, Unpooled.wrappedBuffer(payload), schema, msgMetadata);
@@ -269,20 +267,9 @@ public class MessageImpl<T> implements Message<T> {
         return msg;
     }
 
-    public static long getEntryTimestamp( ByteBuf headersAndPayloadWithBrokerEntryMetadata) throws IOException {
-        // get broker timestamp first if BrokerEntryMetadata is enabled with AppendBrokerTimestampMetadataInterceptor
-        BrokerEntryMetadata brokerEntryMetadata =
-                Commands.parseBrokerEntryMetadataIfExist(headersAndPayloadWithBrokerEntryMetadata);
-        if (brokerEntryMetadata != null && brokerEntryMetadata.hasBrokerTimestamp()) {
-            return brokerEntryMetadata.getBrokerTimestamp();
-        }
-        // otherwise get the publish_time
-        return Commands.parseMessageMetadata(headersAndPayloadWithBrokerEntryMetadata).getPublishTime();
-    }
-
     public static boolean isEntryExpired(int messageTTLInSeconds, long entryTimestamp) {
-        return messageTTLInSeconds != 0 &&
-                (System.currentTimeMillis() > entryTimestamp + TimeUnit.SECONDS.toMillis(messageTTLInSeconds));
+        return messageTTLInSeconds != 0
+                && (System.currentTimeMillis() > entryTimestamp + TimeUnit.SECONDS.toMillis(messageTTLInSeconds));
     }
 
     public static boolean isEntryPublishedEarlierThan(long entryTimestamp, long timestamp) {
@@ -294,13 +281,14 @@ public class MessageImpl<T> implements Message<T> {
         @SuppressWarnings("unchecked")
         MessageImpl<byte[]> msg = (MessageImpl<byte[]>) RECYCLER.get();
 
+        BrokerEntryMetadata brokerEntryMetadata =
+                Commands.parseBrokerEntryMetadataIfExist(headersAndPayloadWithBrokerEntryMetadata);
         Commands.parseMessageMetadata(headersAndPayloadWithBrokerEntryMetadata, msg.msgMetadata);
         msg.payload = headersAndPayloadWithBrokerEntryMetadata;
         msg.messageId = null;
         msg.topic = null;
         msg.cnx = null;
-        msg.properties = Collections.emptyMap();
-        msg.brokerEntryMetadata = null;
+        msg.brokerEntryMetadata = brokerEntryMetadata;
         return msg;
     }
 
@@ -335,12 +323,18 @@ public class MessageImpl<T> implements Message<T> {
         return 0;
     }
 
+    public long getDeliverAtTime() {
+        if (msgMetadata.hasDeliverAtTime()) {
+            return msgMetadata.getDeliverAtTime();
+        }
+        return 0;
+    }
+
     public boolean isExpired(int messageTTLInSeconds) {
         return messageTTLInSeconds != 0 && (brokerEntryMetadata == null || !brokerEntryMetadata.hasBrokerTimestamp()
-                ? (System.currentTimeMillis() >
-                    getPublishTime() + TimeUnit.SECONDS.toMillis(messageTTLInSeconds))
-                : (System.currentTimeMillis() >
-                    brokerEntryMetadata.getBrokerTimestamp() + TimeUnit.SECONDS.toMillis(messageTTLInSeconds)));
+                ? (System.currentTimeMillis() > getPublishTime() + TimeUnit.SECONDS.toMillis(messageTTLInSeconds))
+                : (System.currentTimeMillis()
+                > brokerEntryMetadata.getBrokerTimestamp() + TimeUnit.SECONDS.toMillis(messageTTLInSeconds)));
     }
 
     @Override
@@ -407,16 +401,32 @@ public class MessageImpl<T> implements Message<T> {
         if (schema instanceof AutoConsumeSchema) {
             ((AutoConsumeSchema) schema).fetchSchemaIfNeeded(BytesSchemaVersion.of(getSchemaVersion()));
         } else if (schema instanceof KeyValueSchemaImpl) {
-            ((KeyValueSchemaImpl) schema).fetchSchemaIfNeeded(getTopicName(), BytesSchemaVersion.of(getSchemaVersion()));
+            ((KeyValueSchemaImpl) schema)
+                    .fetchSchemaIfNeeded(getTopicName(), BytesSchemaVersion.of(getSchemaVersion()));
         }
     }
 
-    private SchemaInfo getSchemaInfo() {
+    public SchemaInfo getSchemaInfo() {
+        if (schema == null) {
+            return null;
+        }
         ensureSchemaIsLoaded();
         if (schema instanceof AutoConsumeSchema) {
             return ((AutoConsumeSchema) schema).getSchemaInfo(getSchemaVersion());
         }
         return schema.getSchemaInfo();
+    }
+
+    public void setSchemaInfoForReplicator(SchemaInfo schemaInfo) {
+        if (msgMetadata.hasReplicatedFrom()) {
+            this.schemaInfoForReplicator = schemaInfo;
+        } else {
+            throw new IllegalArgumentException("Only allowed to set schemaInfoForReplicator for a replicated message.");
+        }
+    }
+
+    public SchemaInfo getSchemaInfoForReplicator() {
+        return msgMetadata.hasReplicatedFrom() ? this.schemaInfoForReplicator : null;
     }
 
     @Override
@@ -459,7 +469,7 @@ public class MessageImpl<T> implements Message<T> {
             return schema.decode(getData(), schemaVersion);
         }
     }
-    
+
     private T getKeyValueBySchemaVersion() {
         KeyValueSchemaImpl kvSchema = getKeyValueSchema();
         byte[] schemaVersion = getSchemaVersion();
@@ -524,7 +534,7 @@ public class MessageImpl<T> implements Message<T> {
             if (msgMetadata.getPropertiesCount() > 0) {
                   this.properties = Collections.unmodifiableMap(msgMetadata.getPropertiesList().stream()
                            .collect(Collectors.toMap(KeyValue::getKey, KeyValue::getValue,
-                                   (oldValue,newValue) -> newValue)));
+                                   (oldValue, newValue) -> newValue)));
 
             } else {
                 this.properties = Collections.emptyMap();
@@ -640,6 +650,37 @@ public class MessageImpl<T> implements Message<T> {
         }
     }
 
+    @Override
+    public boolean hasBrokerPublishTime() {
+        return brokerEntryMetadata != null && brokerEntryMetadata.hasBrokerTimestamp();
+    }
+
+    @Override
+    public Optional<Long> getBrokerPublishTime() {
+        if (brokerEntryMetadata != null && brokerEntryMetadata.hasBrokerTimestamp()) {
+            return Optional.of(brokerEntryMetadata.getBrokerTimestamp());
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean hasIndex() {
+        return brokerEntryMetadata != null && brokerEntryMetadata.hasIndex();
+    }
+
+    @Override
+    public Optional<Long> getIndex() {
+        if (brokerEntryMetadata != null && brokerEntryMetadata.hasIndex()) {
+            if (msgMetadata.hasNumMessagesInBatch() && messageId instanceof BatchMessageIdImpl) {
+                int batchSize = ((BatchMessageIdImpl) messageId).getBatchSize();
+                int batchIndex = ((BatchMessageIdImpl) messageId).getBatchIndex();
+                return Optional.of(brokerEntryMetadata.getIndex() - batchSize + batchIndex + 1);
+            }
+            return Optional.of(brokerEntryMetadata.getIndex());
+        }
+        return Optional.empty();
+    }
+
     private MessageImpl(Handle<MessageImpl<?>> recyclerHandle) {
         this.recyclerHandle = recyclerHandle;
         this.redeliveryCount = 0;
@@ -664,7 +705,11 @@ public class MessageImpl<T> implements Message<T> {
         return msgMetadata.getReplicateTosList();
     }
 
-    void setMessageId(MessageIdImpl messageId) {
+    public boolean hasReplicateFrom() {
+        return msgMetadata.hasReplicatedFrom();
+    }
+
+    void setMessageId(MessageId messageId) {
         this.messageId = messageId;
     }
 
@@ -683,6 +728,9 @@ public class MessageImpl<T> implements Message<T> {
     }
 
     SchemaState getSchemaState() {
+        if (getSchemaInfo() == null) {
+            return SchemaState.Ready;
+        }
         return schemaState;
     }
 
@@ -692,7 +740,7 @@ public class MessageImpl<T> implements Message<T> {
 
     /**
      * used only for unit-test to validate payload's state and ref-cnt.
-     * 
+     *
      * @return
      */
     @VisibleForTesting

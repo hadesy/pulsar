@@ -22,17 +22,23 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
-
+import com.beust.jcommander.Parameter;
 import com.google.common.collect.Sets;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.common.util.CmdGenerateDocs;
 import org.testng.annotations.Test;
 
 @Test(groups = "broker")
@@ -100,8 +106,8 @@ public class PulsarBrokerStarterTest {
 
         assertTrue(returnValue instanceof ServiceConfiguration);
         ServiceConfiguration serviceConfig = (ServiceConfiguration) returnValue;
-        assertEquals(serviceConfig.getZookeeperServers(), "z1.example.com,z2.example.com,z3.example.com");
-        assertEquals(serviceConfig.getConfigurationStoreServers(), "gz1.example.com,gz2.example.com,gz3.example.com/foo");
+        assertEquals(serviceConfig.getMetadataStoreUrl(), "z1.example.com,z2.example.com,z3.example.com");
+        assertEquals(serviceConfig.getConfigurationMetadataStoreUrl(), "gz1.example.com,gz2.example.com,gz3.example.com/foo");
         assertFalse(serviceConfig.isBrokerDeleteInactiveTopicsEnabled());
         assertEquals(serviceConfig.getStatusFilePath(), "/tmp/status.html");
         assertEquals(serviceConfig.getBacklogQuotaDefaultLimitGB(), 18);
@@ -117,7 +123,7 @@ public class PulsarBrokerStarterTest {
         assertTrue(serviceConfig.isBacklogQuotaCheckEnabled());
         assertEquals(serviceConfig.getManagedLedgerDefaultMarkDeleteRateLimit(), 5.0);
         assertEquals(serviceConfig.getReplicationProducerQueueSize(), 50);
-        assertFalse(serviceConfig.isReplicationMetricsEnabled());
+        assertTrue(serviceConfig.isReplicationMetricsEnabled());
         assertTrue(serviceConfig.isBookkeeperClientHealthCheckEnabled());
         assertEquals(serviceConfig.getBookkeeperClientHealthCheckErrorThresholdPerInterval(), 5);
         assertTrue(serviceConfig.isBookkeeperClientRackawarePolicyEnabled());
@@ -253,8 +259,8 @@ public class PulsarBrokerStarterTest {
 
         assertTrue(returnValue instanceof ServiceConfiguration);
         ServiceConfiguration serviceConfig = (ServiceConfiguration) returnValue;
-        assertEquals(serviceConfig.getZookeeperServers(), "z1.example.com,z2.example.com,z3.example.com");
-        assertEquals(serviceConfig.getConfigurationStoreServers(), "z1.example.com,z2.example.com,z3.example.com");
+        assertEquals(serviceConfig.getMetadataStoreUrl(), "z1.example.com,z2.example.com,z3.example.com");
+        assertEquals(serviceConfig.getConfigurationMetadataStoreUrl(), "z1.example.com,z2.example.com,z3.example.com");
         assertFalse(serviceConfig.isBrokerDeleteInactiveTopicsEnabled());
         assertEquals(serviceConfig.getStatusFilePath(), "/tmp/status.html");
         assertEquals(serviceConfig.getBacklogQuotaDefaultLimitGB(), 18);
@@ -345,6 +351,40 @@ public class PulsarBrokerStarterTest {
             fail("No argument to main should've raised IllegalArgumentException for no bookie config!");
         } catch (IllegalArgumentException e) {
             // code should reach here.
+        }
+    }
+
+    @Test
+    public void testMainGenerateDocs() throws Exception {
+        PrintStream oldStream = System.out;
+        try {
+            ByteArrayOutputStream baoStream = new ByteArrayOutputStream();
+            System.setOut(new PrintStream(baoStream));
+
+            Class argumentsClass = Class.forName("org.apache.pulsar.PulsarBrokerStarter$StarterArguments");
+            Constructor constructor = argumentsClass.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            Object obj = constructor.newInstance();
+
+            CmdGenerateDocs cmd = new CmdGenerateDocs("pulsar");
+            cmd.addCommand("broker", obj);
+            cmd.run(null);
+
+            String message = baoStream.toString();
+
+            Field[] fields = argumentsClass.getDeclaredFields();
+            for (Field field : fields) {
+                boolean fieldHasAnno = field.isAnnotationPresent(Parameter.class);
+                if (fieldHasAnno) {
+                    Parameter fieldAnno = field.getAnnotation(Parameter.class);
+                    String[] names = fieldAnno.names();
+                    String nameStr = Arrays.asList(names).toString();
+                    nameStr = nameStr.substring(1, nameStr.length() - 1);
+                    assertTrue(message.indexOf(nameStr) > 0);
+                }
+            }
+        } finally {
+            System.setOut(oldStream);
         }
     }
 }

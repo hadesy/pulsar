@@ -18,12 +18,11 @@
  */
 package org.apache.pulsar.admin.cli;
 
-import org.apache.pulsar.client.admin.PulsarAdmin;
-
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.Parameters;
-
 import java.util.function.Supplier;
+import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.common.naming.TopicVersion;
 
 @Parameters(commandDescription = "Operations about brokers")
 public class CmdBrokers extends CmdBase {
@@ -127,9 +126,12 @@ public class CmdBrokers extends CmdBase {
     @Parameters(commandDescription = "Run a health check against the broker")
     private class HealthcheckCmd extends CliCommand {
 
+        @Parameter(names = "--topic-version", description = "topic version V1 is default")
+        private TopicVersion topicVersion;
+
         @Override
         void run() throws Exception {
-            getAdmin().brokers().healthcheck();
+            getAdmin().brokers().healthcheck(topicVersion);
             System.out.println("ok");
         }
 
