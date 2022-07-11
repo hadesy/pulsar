@@ -122,6 +122,12 @@
             <artifactId>presto-main</artifactId>
             <version>${presto.version}</version>
             <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <artifactId>jersey-common</artifactId>
+                    <groupId>org.glassfish.jersey.core</groupId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
